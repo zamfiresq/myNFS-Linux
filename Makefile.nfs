@@ -1,0 +1,39 @@
+# Parameters
+CLIENT = nfs_client
+SERVER = nfs_server
+
+# Source and Object Files
+SOURCES_XDR = nfs.x
+SOURCES_CLNT = nfs_client.c nfs_clnt.c nfs_xdr.c
+SOURCES_SVC = nfs_server.c nfs_svc.c nfs_xdr.c
+OBJECTS_CLNT = $(SOURCES_CLNT:.c=.o)
+OBJECTS_SVC = $(SOURCES_SVC:.c=.o)
+
+# Compiler and Linker Flags
+CFLAGS = -I/usr/include/tirpc
+LDFLAGS = -ltirpc
+
+# Targets
+all: $(CLIENT) $(SERVER)
+
+# Generate RPC files if necessary
+nfs_xdr.c: nfs.x
+	rpcgen -C nfs.x
+	mv nfs_xdr.c nfs_xdr.c.bak
+	sed 's/bool_t/bool_t/g' nfs_xdr.c.bak > nfs_xdr_temp.c
+	mv nfs_xdr_temp.c nfs_xdr.c
+
+# Rules for generating object files
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Rules for building the client and server
+$(CLIENT): $(OBJECTS_CLNT)
+	$(CC) -o $(CLIENT) $(OBJECTS_CLNT) $(LDFLAGS)
+
+$(SERVER): $(OBJECTS_SVC)
+	$(CC) -o $(SERVER) $(OBJECTS_SVC) $(LDFLAGS)
+
+# Clean up build artifacts
+clean:
+	rm -f core $(OBJECTS_CLNT) $(OBJECTS_SVC) $(CLIENT) $(SERVER) nfs_xdr.c
