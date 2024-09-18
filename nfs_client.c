@@ -172,16 +172,24 @@ int main() {
     readdir_args rd_args;
     rd_args.dirname = progname;
     readdir_result *dir = mynfs_readdir_1(&rd_args, clnt);
+
     if (dir == NULL) {
         clnt_perror(clnt, "Error calling mynfs_readdir_1");
         clnt_destroy(clnt);
         return 1;
     }
 
-    // afisarea fisierelor din director
-    for (int i = 0; dir->filenames[i] != NULL; i++) {
-        printf("Readdir result: %s\n", dir->filenames[i]);
+    // afisare fisiere
+    for (int i = 0; i < dir->size; i++) {
+        printf("Readdir result: %d\n", dir->filenames[i]); 
     }
+
+    // eliberare memorie alocata
+    for (int i = 0; i < dir->size; i++) {
+        free(dir->filenames[i]);  // eliberam memoria alocata pentru fiecare fisier
+    }
+    free(dir->filenames);  // eliberare meorie alocata pentru vectorul de fisiere
+
 
     // clean up
     clnt_destroy(clnt);

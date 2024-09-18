@@ -3,20 +3,15 @@
  * It was generated using rpcgen.
  */
 
-
-#include <rpc/rpc.h>
-#include <stdbool.h>
-
 #ifndef _NFS_H_RPCGEN
 #define _NFS_H_RPCGEN
 
-#define NFS_PROGRAM 0x21000001
-#define NFS_VERSION_1 1
+#include <rpc/rpc.h>
 
 
 #ifdef __cplusplus
 extern "C" {
-#endif 
+#endif
 
 #define FILENAME_LENGTH 128
 #define DATA_LENGTH 1024
@@ -24,13 +19,11 @@ extern "C" {
 #define MAX_FILES 10
 #define MAX_FILENAMES_LENGTH 1280
 
-typedef struct {
-    char *filename;
-    int src_offset;
-    int size;
-    int dest_offset;
+struct request {
+	char *filename;
 	int start;
-} request;
+};
+typedef struct request request;
 
 struct chunk {
 	char *filename;
@@ -54,11 +47,15 @@ struct readdir_args {
 };
 typedef struct readdir_args readdir_args;
 
-typedef struct {
-	char **filenames;
-	bool more;
-} readdir_result;
+struct readdir_result {
+	char *filenames;
+	bool_t more;
+	int size;
+};
+typedef struct readdir_result readdir_result;
 
+#define NFS_PROGRAM 0x21000001
+#define NFS_VERSION_1 1
 
 #if defined(__STDC__) || defined(__cplusplus)
 #define ls 1
