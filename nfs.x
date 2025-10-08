@@ -2,11 +2,14 @@ const FILENAME_LENGTH = 128;
 const DATA_LENGTH = 1024;
 const DIRNAME_LENGTH = 256;
 const MAX_FILES = 10;
-const MAX_FILENAMES_LENGTH = 1280;
+const MAX_FILENAMES_LENGTH = 128;
 
 struct request {
    string filename<FILENAME_LENGTH>;
    int start;
+   int src_offset;
+   int dest_offset;
+   int size;
 };
 
 struct chunk {
@@ -26,8 +29,8 @@ struct readdir_args {
 };
 
 struct readdir_result {
-    string filenames<MAX_FILENAMES_LENGTH>;
-    bool more;
+   string filenames<MAX_FILES>;
+   bool more;
 };
 
 program NFS_PROGRAM {

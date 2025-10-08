@@ -17,11 +17,14 @@ extern "C" {
 #define DATA_LENGTH 1024
 #define DIRNAME_LENGTH 256
 #define MAX_FILES 10
-#define MAX_FILENAMES_LENGTH 1280
+#define MAX_FILENAMES_LENGTH 128
 
 struct request {
 	char *filename;
 	int start;
+	int src_offset;
+	int dest_offset;
+	int size;
 };
 typedef struct request request;
 
@@ -50,7 +53,6 @@ typedef struct readdir_args readdir_args;
 struct readdir_result {
 	char *filenames;
 	bool_t more;
-	int size;
 };
 typedef struct readdir_result readdir_result;
 

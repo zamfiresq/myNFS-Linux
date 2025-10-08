@@ -12,16 +12,16 @@ static struct timeval TIMEOUT = { 25, 0 };
 char **
 ls_1(char **argp, CLIENT *clnt)
 {
-	static char *clnt_res;
+    static char *clnt_res[MAX_FILES + 1]; // +1 for NULL terminator
 
-	memset((char *)&clnt_res, 0, sizeof(clnt_res));
-	if (clnt_call (clnt, ls,
-		(xdrproc_t) xdr_wrapstring, (caddr_t) argp,
-		(xdrproc_t) xdr_wrapstring, (caddr_t) &clnt_res,
-		TIMEOUT) != RPC_SUCCESS) {
-		return (NULL);
-	}
-	return (&clnt_res);
+    memset(clnt_res, 0, sizeof(clnt_res));
+    if (clnt_call(clnt, ls,
+        (xdrproc_t) xdr_wrapstring, (caddr_t) argp,
+        (xdrproc_t) xdr_wrapstring, (caddr_t) clnt_res,
+        TIMEOUT) != RPC_SUCCESS) {
+        return NULL;
+    }
+    return clnt_res;
 }
 
 int *

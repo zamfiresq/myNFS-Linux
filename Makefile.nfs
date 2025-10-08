@@ -31,8 +31,8 @@ nfs_xdr.c: nfs.x
 $(CLIENT): $(OBJECTS_CLNT)
 	$(CC) -o $(CLIENT) $(OBJECTS_CLNT) $(LDFLAGS)
 
-$(SERVER): $(OBJECTS_SVC)
-	$(CC) -o $(SERVER) $(OBJECTS_SVC) $(LDFLAGS)
+$(SERVER): nfs_server.o nfs_xdr.o
+	$(CC) -o $(SERVER) nfs_server.o nfs_xdr.o $(LDFLAGS)
 
 # Clean up build artifacts
 clean:

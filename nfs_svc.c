@@ -134,35 +134,35 @@ nfs_program_1(struct svc_req *rqstp, register SVCXPRT *transp)
 	return;
 }
 
-// int
-// main (int argc, char **argv)
-// {
-// 	register SVCXPRT *transp;
+int
+main (int argc, char **argv)
+{
+	register SVCXPRT *transp;
 
-// 	pmap_unset (NFS_PROGRAM, NFS_VERSION_1);
+	pmap_unset (NFS_PROGRAM, NFS_VERSION_1);
 
-// 	transp = svcudp_create(RPC_ANYSOCK);
-// 	if (transp == NULL) {
-// 		fprintf (stderr, "%s", "cannot create udp service.");
-// 		exit(1);
-// 	}
-// 	if (!svc_register(transp, NFS_PROGRAM, NFS_VERSION_1, nfs_program_1, IPPROTO_UDP)) {
-// 		fprintf (stderr, "%s", "unable to register (NFS_PROGRAM, NFS_VERSION_1, udp).");
-// 		exit(1);
-// 	}
+	transp = svcudp_create(RPC_ANYSOCK);
+	if (transp == NULL) {
+		fprintf (stderr, "%s", "cannot create udp service.");
+		exit(1);
+	}
+	if (!svc_register(transp, NFS_PROGRAM, NFS_VERSION_1, nfs_program_1, IPPROTO_UDP)) {
+		fprintf (stderr, "%s", "unable to register (NFS_PROGRAM, NFS_VERSION_1, udp).");
+		exit(1);
+	}
 
-// 	transp = svctcp_create(RPC_ANYSOCK, 0, 0);
-// 	if (transp == NULL) {
-// 		fprintf (stderr, "%s", "cannot create tcp service.");
-// 		exit(1);
-// 	}
-// 	if (!svc_register(transp, NFS_PROGRAM, NFS_VERSION_1, nfs_program_1, IPPROTO_TCP)) {
-// 		fprintf (stderr, "%s", "unable to register (NFS_PROGRAM, NFS_VERSION_1, tcp).");
-// 		exit(1);
-// 	}
+	transp = svctcp_create(RPC_ANYSOCK, 0, 0);
+	if (transp == NULL) {
+		fprintf (stderr, "%s", "cannot create tcp service.");
+		exit(1);
+	}
+	if (!svc_register(transp, NFS_PROGRAM, NFS_VERSION_1, nfs_program_1, IPPROTO_TCP)) {
+		fprintf (stderr, "%s", "unable to register (NFS_PROGRAM, NFS_VERSION_1, tcp).");
+		exit(1);
+	}
 
-// 	svc_run ();
-// 	fprintf (stderr, "%s", "svc_run returned");
-// 	exit (1);
-// 	/* NOTREACHED */
-// }
+	svc_run ();
+	fprintf (stderr, "%s", "svc_run returned");
+	exit (1);
+	/* NOTREACHED */
+}
