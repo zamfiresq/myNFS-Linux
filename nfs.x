@@ -1,52 +1,49 @@
-const FILENAME_LENGTH = 128;
-const DATA_LENGTH = 1024;
-const DIRNAME_LENGTH = 256;
-const MAX_FILES = 10;
-const MAX_FILENAMES_LENGTH = 128;
+const MAX_FILENAME_LENGTH = 128;
+const MAX_FILES           = 50;
+const MAX_PATH_LENGTH     = 4096;
+
 
 struct request {
-   string filename<FILENAME_LENGTH>;
-   int start;
-   int src_offset;
-   int dest_offset;
-   int size;
+    string filename<MAX_FILENAME_LENGTH>;
+    unsigned int size;
+    unsigned int src_offset;
+    unsigned int dest_offset;
 };
 
 struct chunk {
-   string filename<FILENAME_LENGTH>;
-   opaque data<DATA_LENGTH>;
-   int size;
-   int dest_offset;
+    string filename<MAX_FILENAME_LENGTH>;
+    opaque data<>;            /* payload variabil */
+    int    size;
+    unsigned int dest_offset;
 };
-typedef struct chunk chunk;
 
-struct opendir_args {
-   string dirname<DIRNAME_LENGTH>;
-};
+
+typedef string filename_t<MAX_FILENAME_LENGTH>;
 
 struct readdir_args {
-   string dirname<DIRNAME_LENGTH>;
+    string dirname<MAX_PATH_LENGTH>;
 };
 
 struct readdir_result {
-   string filenames<MAX_FILES>;
-   bool more;
+    filename_t filenames<MAX_FILES>;
 };
 
-program NFS_PROGRAM {
-   version NFS_VERSION_1 {
-      string ls(string str) = 1;
-      int create(string filename) = 2;
-      int delete(string filename) = 3;
-      chunk retrieve_file(request*) = 4;
-      int send_file(chunk *) = 5;
-      int mynfs_mkdir(string dirname) = 6;
-      int mynfs_open(string filename) = 7;
-      int mynfs_close(string filename) = 8;
-      chunk mynfs_read(request*) = 9;
-      int mynfs_write(chunk*) = 10;
-      int mynfs_opendir(opendir_args*) = 11;
-      readdir_result mynfs_readdir(readdir_args*) = 12;
-   } = 1;
-} = 0x21000001;
 
+program NFS_PROGRAM {
+    version NFS_VERSION_1 {
+        string          ls(string)                    = 1;
+        int             create(string)                = 2;
+        int             delete(string)                = 3;
+        chunk           retrieve_file(request)        = 4;
+        int             send_file(chunk)              = 5;
+
+        int             mynfs_mkdir(string)           = 6;
+        int             mynfs_remdir(string)          = 7;
+
+        /* „aliasuri” prietenoase către retrieve/send */
+        chunk           mynfs_read(request)           = 8;
+        int             mynfs_write(chunk)            = 9;
+
+        readdir_result  mynfs_readdir(readdir_args)   = 10;
+    } = 1;
+} = 0x21000001;

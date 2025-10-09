@@ -51,7 +51,7 @@ struct readdir_args {
 typedef struct readdir_args readdir_args;
 
 struct readdir_result {
-	char *filenames;
+	char **filenames;
 	bool_t more;
 };
 typedef struct readdir_result readdir_result;

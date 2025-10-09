@@ -1,36 +1,35 @@
-#include <stdio.h>
+#include <errno.h>
+#include <stddef.h>
+#include <stdio.h>    // pt snprintf
+#include <string.h>   // pt strcmp
 #include <stdlib.h>
-#include <string.h>
 #include <rpc/rpc.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <limits.h>
-
+#include <unistd.h>   // pt rmdir
 #include "nfs.h"
 
 // folder partajat
 #define SHARED_DIR "./shared"
 
+
 // versiune program RPC
 #define NFS_PROGRAM 0x21000001
 #define NFS_VERSION_1 1
 
-// nr de proceduri
 #define LS_PROC 1
 #define CREATE_PROC 2
 #define DELETE_PROC 3
 #define RETRIEVE_FILE_PROC 4
 #define SEND_FILE_PROC 5
 #define MYNFS_MKDIR_PROC 6
-#define MYNFS_OPEN_PROC 7
-#define MYNFS_CLOSE_PROC 8
-#define MYNFS_READ_PROC 9
-#define MYNFS_WRITE_PROC 10
-#define MYNFS_OPENDIR_PROC 11
-#define MYNFS_READDIR_PROC 12
+#define MYNFS_REMDIR_PROC 7
+#define MYNFS_READ_PROC 8
+#define MYNFS_WRITE_PROC 9
+#define MYNFS_READDIR_PROC 11   
 
-#define MAX_FILES 10
 #define MAX_FILENAME_LENGTH 128
 #define MAX_FILE_SIZE 1024
 
@@ -44,29 +43,61 @@ File files[MAX_FILES];
 int file_count = 0;
 
 
-// ls_1 scaneaza folderul partajat si returneaza un array de char* (compatibil rpcgen)
+// helper pt construirea unui absolute path 
+static int make_path(char *path, size_t pathlen, const char *rel) {
+    if (!path || pathlen == 0) return -1;
+    if (!rel || !*rel || strcmp(rel, ".") == 0) {
+        // doar pentru SHARED_DIR
+        int n = snprintf(path, pathlen, "%s", SHARED_DIR);
+        if (n < 0 || (size_t)n >= pathlen) return -1;
+        return 0;
+    }
+    if (rel[0] == '/')
+        rel++;
+    int n = snprintf(path, pathlen, "%s/%s", SHARED_DIR, rel);
+    if (n < 0 || (size_t)n >= pathlen) return -1;
+    return 0;
+}
+
+
+// ls_1 scaneaza directorul cerut relativ la SHARED_DIR
 char **ls_1_svc(char **argp, struct svc_req *req) {
-    static char buffer[1024];
+    static char buffer[64 * 1024];   // buffer pentru listare
     static char *result;
+    char path[PATH_MAX];
 
-    DIR *d = opendir(SHARED_DIR);
-    struct dirent *dir;
-    buffer[0] = '\0';
+    // daca se primeste NULL sau sir gol, folosim .
+    const char *sub = (argp && *argp && **argp) ? *argp : ".";
 
-    if (!d) {
+    // calea reala pe server cu make_path
+    if (make_path(path, sizeof(path), sub) != 0) {
         result = NULL;
         return &result;
     }
 
+    buffer[0] = '\0';
+
+    DIR *d = opendir(path);
+    if (!d) {             // director inexistent sau fara permisiuni
+        result = NULL;    
+        return &result;
+    }
+
+    struct dirent *dir;
     while ((dir = readdir(d)) != NULL) {
         if (strcmp(dir->d_name, ".") == 0 || strcmp(dir->d_name, "..") == 0)
             continue;
-        strcat(buffer, dir->d_name);
-        strcat(buffer, "\n");
+
+        size_t used = strlen(buffer);
+        size_t freeb = sizeof(buffer) - used - 2; // 1 pt '\n' + 1 pt '\0'
+        if (freeb == 0) break;
+
+        int wrote = snprintf(buffer + used, freeb + 1, "%s\n", dir->d_name);
+        if (wrote < 0 || (size_t)wrote > freeb) break;
     }
     closedir(d);
 
-    result = buffer;
+    result = buffer;  
     return &result;
 }
 
@@ -75,6 +106,7 @@ bool_t xdr_ls_result(XDR *xdrs, char **arr) {
     u_int arr_len = file_count;
     return xdr_array(xdrs, (char **)&arr, &arr_len, MAX_FILES, sizeof(char *), (xdrproc_t)xdr_string);
 }
+
 
 // create_1 verificare NULL 
 int *create_1_svc(char **filename, struct svc_req *req) {
@@ -123,6 +155,17 @@ int *delete_1_svc(char **argp, struct svc_req *req) {
 
 
 // retrieve_file_1
+static void free_chunk(chunk *res) {
+    if (!res) return;
+    if (res->filename) {
+        free(res->filename);
+        res->filename = NULL;
+    }
+    if (res->data.data_val) {
+        free(res->data.data_val);
+        res->data.data_val = NULL;
+    }
+}
 chunk *retrieve_file_1_svc(request *argp, struct svc_req *req) {
     static chunk result;
 
@@ -137,11 +180,31 @@ chunk *retrieve_file_1_svc(request *argp, struct svc_req *req) {
     }
 
     char path[PATH_MAX];
-    snprintf(path, sizeof(path), "%s/%s", SHARED_DIR, argp->filename);
+    if (make_path(path, sizeof(path), argp->filename) != 0) {
+        fprintf(stderr, "retrieve_file_1_svc: Failed to construct path for %s\n", argp->filename);
+        if(result.filename) {
+            free(result.filename);
+        }
+        if(result.data.data_val) {
+            free(result.data.data_val);
+        }
+        result.filename = strdup(argp->filename);
+        result.data.data_len = 0;
+        result.data.data_val = NULL;
+        result.size = 0;
+        result.dest_offset = 0;
+        return &result;
+    }
 
     FILE *file = fopen(path, "rb");
     if (!file) {
         fprintf(stderr, "retrieve_file_1_svc: Failed to open file %s\n", path);
+        if(result.filename) {
+            free(result.filename);
+        }
+        if(result.data.data_val) {
+            free(result.data.data_val);
+        }
         result.filename = strdup(argp->filename);
         result.data.data_len = 0;
         result.data.data_val = NULL;
@@ -153,6 +216,12 @@ chunk *retrieve_file_1_svc(request *argp, struct svc_req *req) {
     if (fseek(file, argp->src_offset, SEEK_SET) != 0) {
         fprintf(stderr, "retrieve_file_1_svc: Failed to seek in file %s\n", path);
         fclose(file);
+        if(result.filename) {
+            free(result.filename);
+        }
+        if(result.data.data_val) {
+            free(result.data.data_val);
+        }
         result.filename = strdup(argp->filename);
         result.data.data_len = 0;
         result.data.data_val = NULL;
@@ -161,10 +230,17 @@ chunk *retrieve_file_1_svc(request *argp, struct svc_req *req) {
         return &result;
     }
 
+    if(result.data.data_val) {
+        free(result.data.data_val);
+        result.data.data_val = NULL;
+    }
     result.data.data_val = malloc(argp->size);
     if (!result.data.data_val) {
         fprintf(stderr, "retrieve_file_1_svc: Memory allocation failed\n");
         fclose(file);
+        if(result.filename) {
+            free(result.filename);
+        }
         result.filename = strdup(argp->filename);
         result.data.data_len = 0;
         result.size = 0;
@@ -175,6 +251,9 @@ chunk *retrieve_file_1_svc(request *argp, struct svc_req *req) {
     size_t read_bytes = fread(result.data.data_val, 1, argp->size, file);
     fclose(file);
 
+    if(result.filename) {
+        free(result.filename);
+    }
     result.filename = strdup(argp->filename);
     result.data.data_len = read_bytes;
     result.size = read_bytes;
@@ -182,6 +261,8 @@ chunk *retrieve_file_1_svc(request *argp, struct svc_req *req) {
 
     return &result;
 }
+
+
 
 
 
@@ -196,19 +277,35 @@ int *send_file_1_svc(chunk *argp, struct svc_req *req) {
         return &result;
     }
 
-    snprintf(path, sizeof(path), "%s/%s", SHARED_DIR, argp->filename);
+    if (make_path(path, sizeof(path), argp->filename) != 0) {
+        fprintf(stderr, "send_file_1_svc: Failed to construct path for %s\n", argp->filename);
+        result = -1;
+        return &result;
+    }
 
     FILE *file = fopen(path, "r+b");
     if (!file) {
-        file = fopen(path, "wb");  // dacă nu există, îl creăm
+        file = fopen(path, "w+b");  // daca nu extsta, il cream
     }
 
     if (file) {
-        fseek(file, argp->dest_offset, SEEK_SET);
-        fwrite(argp->data.data_val, 1, argp->size, file);
+        if (fseek(file, argp->dest_offset, SEEK_SET) != 0) {
+            perror("send_file_1_svc fseek");
+            fclose(file);
+            result = -1;
+            return &result;
+        }
+
+        size_t written = fwrite(argp->data.data_val, 1, argp->data.data_len, file);
         fclose(file);
-        printf("send_file_1_svc: wrote %d bytes to %s\n", argp->size, path);
-        result = 0;
+
+        if (written == argp->data.data_len) {
+            printf("send_file_1_svc: wrote %zu bytes to %s at offset %d\n", written, path, argp->dest_offset);
+            result = 0;
+        } else {
+            fprintf(stderr, "send_file_1_svc: partial write (%zu/%u) to %s\n", written, argp->data.data_len, path);
+            result = -1;
+        }
     } else {
         perror("send_file_1_svc fopen");
         result = -1;
@@ -239,95 +336,171 @@ int *mynfs_mkdir_1_svc(char **argp, struct svc_req *req) {
     return &result;
 }
 
-int *mynfs_open_1_svc(char **argp, struct svc_req *req) {
-    static int result;
-
-    FILE *file = fopen(*argp, "rb");
-    if (file) {
-        fclose(file);  // Close the file if it opened successfully
-        result = 0;  // Success
-    } else {
-        result = -1;  // Error
-    }
-    return &result;
-}
-
-int *mynfs_close_1_svc(char **argp, struct svc_req *req) {
-    static int result;
-
-    // No need to open/close a file for this dummy implementation
-    result = 0;  // Success
-    return &result;
-}
-
+// pt citirea din fisier
 chunk *mynfs_read_1_svc(request *argp, struct svc_req *req) {
-    if (argp == NULL) {
-        fprintf(stderr, "mynfs_read_1_svc: received NULL request\n");
-        static chunk empty_result;
-        empty_result.filename = NULL;
-        empty_result.data.data_len = 0;
-        empty_result.data.data_val = NULL;
-        empty_result.size = 0;
-        empty_result.dest_offset = 0;
-        return &empty_result;
+    static chunk result;
+    if (result.filename) {
+        free(result.filename);
+        result.filename = NULL;
     }
-    return retrieve_file_1_svc(argp, req);
+    if (result.data.data_val) {
+        free(result.data.data_val);
+        result.data.data_val = NULL;
+    }
+    result.data.data_len = 0;
+    result.size = 0;
+    result.dest_offset = 0;
+
+    if (argp == NULL || argp->filename == NULL) {
+        fprintf(stderr, "mynfs_read_1_svc: received NULL request or filename\n");
+        result.filename = NULL;
+        return &result;
+    }
+
+    char path[PATH_MAX];
+    if (make_path(path, sizeof(path), argp->filename) != 0) {
+        fprintf(stderr, "mynfs_read_1_svc: Failed to construct path for %s\n", argp->filename);
+        result.filename = strdup(argp->filename);
+        return &result;
+    }
+
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        fprintf(stderr, "mynfs_read_1_svc: Failed to open file %s\n", path);
+        result.filename = strdup(argp->filename);
+        return &result;
+    }
+
+    if (fseek(file, argp->src_offset, SEEK_SET) != 0) {
+        fprintf(stderr, "mynfs_read_1_svc: Failed to seek in file %s\n", path);
+        fclose(file);
+        result.filename = strdup(argp->filename);
+        return &result;
+    }
+
+    result.data.data_val = malloc(argp->size);
+    if (!result.data.data_val) {
+        fprintf(stderr, "mynfs_read_1_svc: Memory allocation failed\n");
+        fclose(file);
+        result.filename = strdup(argp->filename);
+        return &result;
+    }
+
+    size_t read_bytes = fread(result.data.data_val, 1, argp->size, file);
+    fclose(file);
+
+    result.filename = strdup(argp->filename);
+    result.data.data_len = read_bytes;
+    result.size = read_bytes;
+    result.dest_offset = argp->dest_offset;
+    return &result;
 }
 
+// legatura write_1_svc cu send_file_1_svc
 int *mynfs_write_1_svc(chunk *argp, struct svc_req *req) {
-    return send_file_1_svc(argp, req);  // Delegate to send_file_1_svc
+    return send_file_1_svc(argp, req);  
 }
 
-int *mynfs_opendir_1_svc(opendir_args *argp, struct svc_req *req) {
-    static int result;
 
-    DIR *dir = opendir(argp->dirname);
-    if (dir) {
-        closedir(dir);  // Close the directory
-        result = 0;  // Success
+// remdir_1_svc (sterge director recursiv)
+static int recursive_remove(const char *path) {
+    struct stat statbuf;
+    if (stat(path, &statbuf) != 0) {
+        return -1;
+    }
+    if (S_ISDIR(statbuf.st_mode)) {
+        DIR *dir = opendir(path);
+        if (!dir) return -1;
+        struct dirent *entry;
+        int ret = 0;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+            char child_path[PATH_MAX];
+            snprintf(child_path, sizeof(child_path), "%s/%s", path, entry->d_name);
+            if (recursive_remove(child_path) != 0) {
+                ret = -1;
+            }
+        }
+        closedir(dir);
+        if (rmdir(path) != 0) {
+            ret = -1;
+        }
+        return ret;
     } else {
-        result = -1;  // Error
+        // nu e folder, sterge fisierul
+        return remove(path);
+    }
+}
+
+// remdir_1_svc
+int *mynfs_remdir_1_svc(char **argp, struct svc_req *req) {
+    static int result;
+    char path[PATH_MAX];
+
+    if (argp == NULL || *argp == NULL || **argp == '\0') {
+        fprintf(stderr, "mynfs_remdir_1_svc: received NULL or empty dirname\n");
+        result = -1;
+        return &result;
+    }
+
+    snprintf(path, sizeof(path), "%s/%s", SHARED_DIR, *argp);
+    if (recursive_remove(path) == 0) {
+        printf("mynfs_remdir_1_svc: recursively removed directory %s\n", path);
+        result = 0;  // success
+    } else {
+        perror("mynfs_remdir_1_svc recursive_remove");
+        result = -1;  // error
     }
     return &result;
 }
 
+
+// readdir_1_svc
 readdir_result *mynfs_readdir_1_svc(readdir_args *argp, struct svc_req *req) {
     static readdir_result result;
-    static char filenames_buffer[MAX_FILES * MAX_FILENAME_LENGTH];
-    static char *file_array[MAX_FILES + 1];
+    static char name_buf[MAX_FILES][MAX_FILENAME_LENGTH];
+    static char *names[MAX_FILES];
+    DIR *d;
+    struct dirent *dir;
+    char path[PATH_MAX];
+    int count = 0;
 
-    result.filenames = NULL;
-    result.more = FALSE;
+    // resetare rezultat si pointeri
+    memset(&result, 0, sizeof(result));
+    for (int i = 0; i < MAX_FILES; ++i) {
+        names[i] = NULL;
+        name_buf[i][0] = '\0';
+    }
 
     if (!argp || !argp->dirname) {
-        fprintf(stderr, "mynfs_readdir_1_svc: received NULL argument\n");
-        file_array[0] = NULL;
-        result.filenames = (char *)file_array;
+        result.filenames.filenames_val = NULL;
+        result.filenames.filenames_len = 0;
         return &result;
     }
 
-    DIR *dir = opendir(argp->dirname);
-    if (!dir) {
-        fprintf(stderr, "mynfs_readdir_1_svc: failed to open directory %s\n", argp->dirname);
-        file_array[0] = NULL;
-        result.filenames = (char *)file_array;
+    snprintf(path, sizeof(path), "%s/%s", SHARED_DIR, argp->dirname);
+    d = opendir(path);
+    if (!d) {
+        perror("mynfs_readdir_1_svc opendir");
+        result.filenames.filenames_val = NULL;
+        result.filenames.filenames_len = 0;
         return &result;
     }
 
-    struct dirent *entry;
-    int count = 0;
-    while ((entry = readdir(dir)) != NULL && count < MAX_FILES) {
-        strncpy(&filenames_buffer[count * MAX_FILENAME_LENGTH], entry->d_name, MAX_FILENAME_LENGTH - 1);
-        filenames_buffer[count * MAX_FILENAME_LENGTH + MAX_FILENAME_LENGTH - 1] = '\0';
-        file_array[count] = &filenames_buffer[count * MAX_FILENAME_LENGTH];
+    while ((dir = readdir(d)) != NULL && count < MAX_FILES) {
+        if (strcmp(dir->d_name, ".") == 0 || strcmp(dir->d_name, "..") == 0)
+            continue;
+        // copiere nume fisier in buffer
+        strncpy(name_buf[count], dir->d_name, MAX_FILENAME_LENGTH - 1);
+        name_buf[count][MAX_FILENAME_LENGTH - 1] = '\0';
+        names[count] = name_buf[count];
         count++;
     }
-    file_array[count] = NULL;
+    closedir(d);
 
-    result.filenames = (char *)file_array;
-    result.more = FALSE;
-
-    closedir(dir);
+    result.filenames.filenames_val = names;
+    result.filenames.filenames_len = count;
     return &result;
 }
 
@@ -386,7 +559,8 @@ void nfs_1(struct svc_req *rqstp, register SVCXPRT *transp) {
             if (!svc_sendreply(transp, (xdrproc_t)xdr_chunk, (caddr_t)res)) {
                 svcerr_systemerr(transp);
             }
-            svc_freeargs(transp, (xdrproc_t)xdr_request, (caddr_t)&req);
+            xdr_free((xdrproc_t)xdr_request, (caddr_t)&req);   // elibereaza argumentele
+            xdr_free((xdrproc_t)xdr_chunk, (caddr_t)res);      // elibereaza rezultatul
             return;
         }
         case SEND_FILE_PROC: {
@@ -402,28 +576,6 @@ void nfs_1(struct svc_req *rqstp, register SVCXPRT *transp) {
             svc_freeargs(transp, (xdrproc_t)xdr_chunk, (caddr_t)&ch);
             return;
         }
-        case MYNFS_MKDIR_PROC:
-            svc_sendreply(transp, (xdrproc_t)xdr_int, mynfs_mkdir_1_svc(NULL, rqstp));
-            return;
-        case MYNFS_OPEN_PROC:
-            svc_sendreply(transp, (xdrproc_t)xdr_int, mynfs_open_1_svc(NULL, rqstp));
-            return;
-        case MYNFS_CLOSE_PROC:
-            svc_sendreply(transp, (xdrproc_t)xdr_int, mynfs_close_1_svc(NULL, rqstp));
-            return;
-        case MYNFS_READ_PROC: {
-            request req = {0};
-            if (!svc_getargs(transp, (xdrproc_t)xdr_request, (caddr_t)&req)) {
-                svcerr_decode(transp);
-                return;
-            }
-            chunk *res = mynfs_read_1_svc(&req, rqstp);
-            if (!svc_sendreply(transp, (xdrproc_t)xdr_chunk, (caddr_t)res)) {
-                svcerr_systemerr(transp);
-            }
-            svc_freeargs(transp, (xdrproc_t)xdr_request, (caddr_t)&req);
-            return;
-        }
         case MYNFS_WRITE_PROC: {
             chunk ch = {0};
             if (!svc_getargs(transp, (xdrproc_t)xdr_chunk, (caddr_t)&ch)) {
@@ -437,24 +589,75 @@ void nfs_1(struct svc_req *rqstp, register SVCXPRT *transp) {
             svc_freeargs(transp, (xdrproc_t)xdr_chunk, (caddr_t)&ch);
             return;
         }
-        case MYNFS_OPENDIR_PROC:
-            svc_sendreply(transp, (xdrproc_t)xdr_int, mynfs_opendir_1_svc(NULL, rqstp));
+        case MYNFS_MKDIR_PROC: {
+            char *arg = NULL;
+            if (!svc_getargs(transp, (xdrproc_t)xdr_wrapstring, (caddr_t)&arg)) {
+                svcerr_decode(transp);
+                return;
+            }
+            int *res = mynfs_mkdir_1_svc(&arg, rqstp);
+            if (!svc_sendreply(transp, (xdrproc_t)xdr_int, (caddr_t)res)) {
+                svcerr_systemerr(transp);
+            }
+            svc_freeargs(transp, (xdrproc_t)xdr_wrapstring, (caddr_t)&arg);
             return;
-        case MYNFS_READDIR_PROC:
-            svc_sendreply(transp, (xdrproc_t)xdr_readdir_result, mynfs_readdir_1_svc(NULL, rqstp));
+        }
+        case MYNFS_REMDIR_PROC: {
+            char *arg = NULL;
+            if (!svc_getargs(transp, (xdrproc_t)xdr_wrapstring, (caddr_t)&arg)) {
+                svcerr_decode(transp);
+                return;
+            }
+            int *res = mynfs_remdir_1_svc(&arg, rqstp);
+            if (!svc_sendreply(transp, (xdrproc_t)xdr_int, (caddr_t)res)) {
+                svcerr_systemerr(transp);
+            }
+            svc_freeargs(transp, (xdrproc_t)xdr_wrapstring, (caddr_t)&arg);
             return;
+        }
+        case MYNFS_READDIR_PROC: {
+            readdir_args arg = {0};
+            if (!svc_getargs(transp, (xdrproc_t)xdr_readdir_args, (caddr_t)&arg)) {
+                svcerr_decode(transp);
+                return;
+            }
+            readdir_result *res = mynfs_readdir_1_svc(&arg, rqstp);
+            if (!svc_sendreply(transp, (xdrproc_t)xdr_readdir_result, (caddr_t)res)) {
+                svcerr_systemerr(transp);
+            }
+            xdr_free((xdrproc_t)xdr_readdir_args, (caddr_t)&arg);      
+            xdr_free((xdrproc_t)xdr_readdir_result, (caddr_t)res);      
+            return;
+        }
+            case MYNFS_READ_PROC: {
+        request req = {0};
+        if (!svc_getargs(transp, (xdrproc_t)xdr_request, (caddr_t)&req)) {
+            svcerr_decode(transp);
+            return;
+        }
+        chunk *res = mynfs_read_1_svc(&req, rqstp);
+        if (!svc_sendreply(transp, (xdrproc_t)xdr_chunk, (caddr_t)res)) {
+            svcerr_systemerr(transp);
+        }
+        xdr_free((xdrproc_t)xdr_request, (caddr_t)&req);  
+        xdr_free((xdrproc_t)xdr_chunk, (caddr_t)res);     
+        return;
+    }
         default:
             svcerr_noproc(transp);
             return;
     }
 }
 
-// Main function to initialize and start the server
+
+
+
+// activare server
 int main() {
-    // Unset any previous registrations
+
     pmap_unset(NFS_PROGRAM, NFS_VERSION_1);
 
-    // Create an RPC server handle
+    // RPC server handle
     SVCXPRT *transp;
     transp = svcudp_create(RPC_ANYSOCK);
     if (transp == NULL) {
@@ -463,18 +666,18 @@ int main() {
     }
     printf("RPC service handle created successfully.\n");
 
-    // Register the service with the RPC server
+    // inregistrare serviciu cu RPC
     if (!svc_register(transp, NFS_PROGRAM, NFS_VERSION_1, nfs_1, IPPROTO_UDP)) {
         fprintf(stderr, "Unable to register (NFS_PROGRAM, NFS_VERSION_1, IPPROTO_UDP).\n");
         exit(1);
     }
     printf("Service registered successfully with program number %d and version %d.\n", NFS_PROGRAM, NFS_VERSION_1);
 
-    // Start the server loop
+    // pornire
     printf("Starting svc_run...\n");
-    svc_run();  // Start the RPC server loop
+    svc_run();  // server loop
 
-    // If svc_run returns, it indicates an error
+    // caz de eroare
     fprintf(stderr, "Error: svc_run returned\n");
     exit(1);
 }
