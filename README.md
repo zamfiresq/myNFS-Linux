@@ -14,7 +14,7 @@ It allows remote file and directory operations on a server, accessible from a si
 ### Dependencies
 
 - **LibTIRPC**: The project uses libtirpc to implement the transport-independent RPC.
-  - To install: sudo apt-get install libtirpc-dev
+  - To install: `sudo apt-get install libtirpc-dev`
 - **GCC** + **make**
 
 ### Compilation
